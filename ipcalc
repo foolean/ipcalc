@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+'''
+    ipcalc - IP Subnet Calculator
+    Copyright (C) 2023 Bennett Samowich
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+'''
+
+# Import standard modules
+import argparse
+import ipaddress
+import sys
+
+# Default width of the label text
+LABEL_WIDTH = 25
+
+
+# pylint: disable=too-few-public-methods
+class ExtendAction(argparse.Action):
+    '''
+    Extend the argparse actions
+    '''
+    def __call__(self, parser, namespace, values, option_string=None):
+        items = getattr(namespace, self.dest) or []
+        items.extend(values)
+        setattr(namespace, self.dest, items)
+# pylint: enable=too-few-public-methods
+
+
+def valid_index(arg_value):
+    '''
+    Helper function to parse a CSV list of
+    indexes and ensure they are integers
+
+    Arguments:
+        arg_value   - incoming value from argparse
+
+    Returns
+        values      - list of validated indexes
+
+    Exceptions
+        ArgumentTypeError   - index value is not an integer or doesn't exist
+    '''
+    values = []
+    for value in arg_value.split(','):
+        if value.isdigit() is True:
+            values.append(int(value))
+        else:
+            raise argparse.ArgumentTypeError(f'Invalid index "{value}"')
+
+    return values
+
+
+def valid_address(arg_value):
+    '''
+    Helper function to parse a CSV list of
+    IP addresses and ensure they are valid
+
+    Arguments:
+        arg_value   - incoming value from argparse
+
+    Returns
+        values      - list of validated IP addresses
+
+    Exceptions
+        ArgumentTypeError   - IP value is not an IP address or doesn't exist
+    '''
+    values = []
+    for value in arg_value.split(','):
+        try:
+            ipaddress.IPv4Address(value)
+        except ipaddress.AddressValueError as exception:
+            raise argparse.ArgumentTypeError(f'Invalid address "{value}"') from exception
+        values.append(value)
+
+    return values
+
+
+def parse_arguments():
+    '''
+    Parse the command-line arguments
+
+    Arguments
+        None
+
+    Returns
+        options     - dictionary of command-line options
+    '''
+    parser = argparse.ArgumentParser(description='IPv4 Subnet Calculator')
+    parser.register('action', 'extend', ExtendAction)
+
+    parser.add_argument(
+        'cidr',
+        help='CIDR notation of the address to use (e.g. 192.168.127.10/24)',
+    )
+
+    parser.add_argument(
+        '-i', '--index',
+        dest='index',
+        metavar='INT',
+        action='extend',
+        default=[],
+        type=valid_index,
+        help='Index for which to print the corresponding IP address (use CSV or  multiple times)'
+    )
+
+    parser.add_argument(
+        '-I', '--ip',
+        dest='ip',
+        metavar='IP',
+        action='extend',
+        type=valid_address,
+        help='IP addresses for which to print the corresponding index (use CSV or multiple times)'
+    )
+
+    parser.add_argument(
+        '-v', '--verbose',
+        dest='verbose',
+        action='store_true',
+        help='Print more verbose information',
+    )
+
+    parser.add_argument(
+        '-p', '--previous',
+        dest='previous',
+        metavar='INT',
+        nargs='?',
+        const=1,
+        type=int,
+        help='Print the (n) previous CIDR ranges',
+    )
+
+    parser.add_argument(
+        '-n', '--next',
+        dest='next',
+        metavar='INT',
+        nargs='?',
+        const=1,
+        type=int,
+        help='Print the (n) next CIDR ranges',
+    )
+
+    # Parse the command-line arguments
+    args = parser.parse_args()
+
+    return vars(args)
+
+
+def print_val(label, value, visible=True):
+    '''
+    Helper function to print the output
+    in a justified format.
+    '''
+    if visible is True:
+        format_string = f'%-{LABEL_WIDTH}s'
+        fmtd_label = format_string % (label + ':')
+        print(f'{fmtd_label} {value}')
+
+
+def print_previous_cidr(network, count):
+    '''
+    Helper function to print the list
+    of preceding CIDR blocks
+    '''
+    for index in range(count, 0, -1):
+        net_obj = ipaddress.IPv4Network(f'{network.network_address - (network.num_addresses * index)}/{network.prefixlen}')
+        print(f'previous: {net_obj.network_address}/{network.prefixlen}')
+
+
+def print_next_cidr(network, count):
+    '''
+    Helper function to print the list
+    of following CIDR blocks
+    '''
+    for index in range(1, count+1):
+        net_obj = ipaddress.IPv4Network(f'{network.network_address + (network.num_addresses * index)}/{network.prefixlen}')
+        print(f'next:     {net_obj.network_address}/{network.prefixlen}')
+
+
+def main():
+    '''
+    Main processing function
+    '''
+
+    # Parse the command-line arguments
+    options = parse_arguments()
+
+    # Create the interface and network objects
+    ip_int = ipaddress.IPv4Interface(options['cidr'])
+    net_obj = ip_int.network
+
+    # Output the subnet information
+    if ip_int.ip != net_obj.network_address:
+        print_val('ip address', ip_int.ip)
+    print_val('network', net_obj.network_address)
+    print_val('prefixlen', f'/{net_obj.prefixlen}')
+    print_val('netmask', net_obj.netmask)
+    print_val('wildcard mask', net_obj.hostmask, options['verbose'])
+    print_val('host range', f'{net_obj.network_address + 1} to {net_obj.broadcast_address - 1}')
+    print_val('broadcast addresss', net_obj.broadcast_address)
+    print_val('total IP addresses', net_obj.num_addresses - 2)
+
+    if options['verbose'] is True:
+        print('')
+        print_val('hex', f'{ip_int:#x}', True)
+        print_val('binary', f'{ip_int:#b}', True)
+        print_val('in-addr.arpa format', ip_int.reverse_pointer, True)
+
+    # Output the index of the ip address sepcified above
+    host_index = int(ip_int) - int(net_obj.network_address)
+    if net_obj.num_addresses - 2 >= host_index >= 1:
+        print_val('host index', host_index)
+        options['index'].append(host_index)
+
+    # Convert the list of ip addresses to their corresponding indexes
+    # and add them to the list of indexes
+    if options['ip'] is not None:
+        for ip_addr in options['ip']:
+            index = int(ipaddress.IPv4Address(ip_addr)) - int(net_obj.network_address)
+            if net_obj.num_addresses - 2 >= index >= 1:
+                options['index'].append(index)
+
+    # Output the ip addresses at the specified indexes
+    if options['index'] is not None:
+        print('')
+        for index in sorted([*set(options['index'])]):
+            if net_obj.num_addresses - 2 >= index >= 1:
+                print_val(f'ip address[{index}]', net_obj.network_address + index)
+
+
+    if options['previous'] is not None or options['next'] is not None:
+        print('')
+        print('CIDR list:')
+        if options['previous'] is not None:
+            print_previous_cidr(net_obj, options['previous'])
+        print(f'current:  {net_obj.network_address}/{net_obj.prefixlen}')
+        if options['next'] is not None:
+            print_next_cidr(net_obj, options['next'])
+
+
+# Allow other programs to import this as a module
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as err:
+        # Handle any previously unhandled exceptions
+        #import traceback
+        #FRAME = traceback.extract_tb(err.__traceback__, -1)[0]
+        #logging.critical('unhandled %s exception in %s(), line %s of %s: %s', type(err).__name__, FRAME.name, FRAME.lineno, FRAME.filename, err)
+        print(f'unhandled {type(err).__name__} exception: {err}')
+        raise sys.exc_info()
